@@ -1,0 +1,20 @@
+{
+   Helgrind_shared_ptr
+   Helgrind:Race
+   ...
+   obj:*libstdc++*
+   fun:*Sp_counted*
+   fun:*__shared_count*
+   fun:*__shared_ptr*
+   fun:*shared_ptr*
+}
+
+{
+   DRD_shared_ptr
+   drd:ConflictingAccess
+   obj:*libstdc++*
+   fun:*Sp_counted*
+   fun:*__shared_count*
+   fun:*__shared_ptr*
+   fun:*shared_ptr*
+}
