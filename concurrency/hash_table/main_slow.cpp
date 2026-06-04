@@ -14,7 +14,7 @@
 */
 #include <bits/stdc++.h>
 
-constexpr uint_fast8_t CntOfMeasure = 5;
+constexpr uint_fast8_t CntOfMeasure = 2;
 
 struct Value {
     std::string str;
@@ -26,47 +26,48 @@ struct Value {
 struct Node {
     int key;
     Value value;
-    std::shared_ptr<Node> next;
+    Node* next;
     mutable std::mutex mtx;
+
     Node(int k, const Value& v) : key(k), value(v), next(nullptr) {}
 };
 
 class ParallelHashTable {
 private:
-    static constexpr size_t BUCKET_COUNT = 10'000'019; // 10'000'019 1'000'003
-    std::vector<std::shared_ptr<Node>> buckets;
+    static constexpr size_t BUCKET_COUNT = 10'000'019;
+    std::vector<std::unique_ptr<Node>> buckets;
 
-    constexpr size_t hash(int key) const {
+    inline size_t hash(const int key) const {
         return std::hash<int>{}(key) % BUCKET_COUNT;
     }
-    void delete_chain(std::shared_ptr<Node> head) {
+    void delete_chain(Node* head) {
         while (head) {
-            std::shared_ptr<Node> next = head->next;
-            head->next.reset();
+            Node* next = head->next;
+            delete head;
             head = next;
         }
     }
 
 public:
-    ParallelHashTable() : buckets(BUCKET_COUNT) {
-        for (auto& b : buckets)
-            b = std::make_shared<Node>(-1, Value{});
-    }
+    ParallelHashTable() : buckets(BUCKET_COUNT) {}
+
     ~ParallelHashTable() {
-        for (size_t i = 0; i < buckets.size(); ++i)
-            delete_chain(buckets[i]);
+        for (auto& b : buckets)
+            delete_chain(b.release());
     }
 
-    bool contains(int key) {
+    bool contains(const int key) const {
         size_t idx = hash(key);
-        std::shared_ptr<Node> curr = buckets[idx];
+        if (!buckets[idx]) return false;
+
+        Node* curr = buckets[idx].get();
         std::unique_lock<std::mutex> lock_curr(curr->mtx);
 
         while (curr) {
             if (curr->key == key)
                 return true;
 
-            std::shared_ptr<Node> next = curr->next;
+            Node* next = curr->next;
             if (!next) break;
 
             std::unique_lock<std::mutex> lock_next(next->mtx);
@@ -77,24 +78,29 @@ public:
         return false;
     }
 
-    void put(int key, const Value& val) {
+    void put(const int key, const Value& val) {
         size_t idx = hash(key);
-        std::shared_ptr<Node> newNode = std::make_shared<Node>(key, val);
+        if (!buckets[idx]) {
+            buckets[idx] = std::make_unique<Node>(key, val);
+            return;
+        }
+        Node* newNode = new Node(key, val);
 
-        std::shared_ptr<Node> head = buckets[idx];
+        Node* head = buckets[idx].get();
         std::unique_lock<std::mutex> lock_prev(head->mtx);
-        std::shared_ptr<Node> prev = head;
-        std::shared_ptr<Node> curr = prev->next;
+        Node* prev = head;
+        Node* curr = prev->next;
         std::unique_lock<std::mutex> lock_curr;
         if (curr) lock_curr = std::unique_lock<std::mutex>(curr->mtx);
 
         while (curr) {
             if (curr->key == key) {
                 curr->value = val;
+                delete newNode;
                 return;
             }
 
-            std::shared_ptr<Node> next = curr->next;
+            Node* next = curr->next;
             if (!next) break;
 
             std::unique_lock<std::mutex> lock_next(next->mtx);
@@ -109,24 +115,27 @@ public:
         prev->next = newNode;
     }
 
-    bool remove(int key) {
+    bool remove(const int key) {
         size_t idx = hash(key);
-        std::shared_ptr<Node> head = buckets[idx];
-        if (!head) return false;
+        if (!buckets[idx]) return false;
+        
+        Node* head = buckets[idx].get();
 
         std::unique_lock<std::mutex> lock_prev(head->mtx);
-        std::shared_ptr<Node> prev = head;
-        std::shared_ptr<Node> curr = prev->next;
+        Node* prev = head;
+        Node* curr = prev->next;
         std::unique_lock<std::mutex> lock_curr;
         if (curr) lock_curr = std::unique_lock<std::mutex>(curr->mtx);
 
         while (curr) {
             if (curr->key == key) {
                 prev->next = curr->next;
+                lock_curr.unlock();
+                delete curr;
                 return true;
             }
 
-            std::shared_ptr<Node> next = curr->next;
+            Node* next = curr->next;
             if (!next) break;
 
             std::unique_lock<std::mutex> lock_next(next->mtx);
@@ -140,7 +149,7 @@ public:
     }
 };
 
-void test_sequential_put(ParallelHashTable& table, int num_threads, int total_keys = 10'000'000) {
+void test_sequential_put(ParallelHashTable& table, int num_threads, int total_keys = 50'000'000) {
     std::vector<std::thread> threads;
     int per_thread = total_keys / num_threads;
     for (int t = 0; t < num_threads; ++t) {
@@ -212,5 +221,6 @@ int main(int argc, char* argv[]) {
         }, num_threads);
         std::cout << t2 << '\n';
     }
+
     return 0;
 }

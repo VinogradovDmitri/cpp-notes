@@ -41,3 +41,7 @@
 *.dwo
 
 *.log
+.editorconfig
+valgrind.txt
+helgrind.txt
+drd.txt
